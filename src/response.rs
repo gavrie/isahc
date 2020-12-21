@@ -86,6 +86,23 @@ pub trait ResponseExt<T> {
     /// automatically and a warning emitted. If you intentionally _want_ abort
     /// behavior, then it is better to call this method explicitly so that no
     /// warning will be emitted.
+    ///
+    /// Note: The connection may not be immediately closed and the operation may
+    /// be performed asynchronously.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use isahc::prelude::*;
+    ///
+    /// // Make a request and wait for the response headers.
+    /// let response = isahc::get("https://httpbin.org")?;
+    ///
+    /// // Abort the request without reading the body at all.
+    /// response.abort();
+    ///
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     fn abort(self);
 }
 

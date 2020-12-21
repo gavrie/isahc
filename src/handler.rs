@@ -495,7 +495,7 @@ impl curl::easy::Handler for RequestHandler {
                 Poll::Ready(Err(e)) => {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         tracing::warn!(
-                            "response dropped without fully consuming the response body, which can prevent connection reuse"
+                            "response dropped without fully consuming the response body, which may result in sub-optimal performance"
                         );
                     } else {
                         tracing::error!("error writing response body to buffer: {}", e);
