@@ -228,7 +228,6 @@
     unused,
     clippy::all
 )]
-
 // These lints suggest to use features not available in our MSRV.
 #![allow(clippy::manual_strip, clippy::match_like_matches_macro)]
 
@@ -245,6 +244,7 @@ pub mod cookies;
 mod agent;
 mod body;
 mod client;
+mod context;
 mod default_headers;
 mod handler;
 mod headers;

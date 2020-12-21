@@ -2,18 +2,17 @@
 
 use crate::{
     body::AsyncBody,
+    context::RequestContext,
     error::{Error, ErrorKind},
     metrics::Metrics,
     parsing::{parse_header, parse_status_line},
     response::{LocalAddr, RemoteAddr},
 };
-use crossbeam_utils::atomic::AtomicCell;
 use curl::easy::{InfoType, ReadError, SeekResult, WriteError};
 use curl_sys::CURL;
 use flume::Sender;
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use http::Response;
-use once_cell::sync::OnceCell;
 use sluice::pipe;
 use std::{
     ascii,
@@ -26,7 +25,6 @@ use std::{
     os::raw::{c_char, c_long},
     pin::Pin,
     ptr,
-    sync::Arc,
     task::{Context, Poll, Waker},
 };
 
@@ -57,7 +55,7 @@ pub(crate) struct RequestHandler {
     span: tracing::Span,
 
     /// State shared by the handler and its future.
-    shared: Arc<Shared>,
+    context: RequestContext,
 
     /// Sender for the associated future.
     sender: Option<Sender<Result<http::response::Builder, Error>>>,
@@ -98,23 +96,6 @@ pub(crate) struct RequestHandler {
 // Would be send implicitly except for the raw CURL pointer.
 unsafe impl Send for RequestHandler {}
 
-/// State shared by the handler and its future.
-///
-/// This is also used to keep track of the lifetime of the request.
-#[derive(Debug)]
-struct Shared {
-    /// Set to the final result of the transfer received from curl. This is used
-    /// to communicate an error while reading the response body if the handler
-    /// suddenly aborts.
-    result: OnceCell<Result<(), Error>>,
-
-    /// Set to true whenever the response body is dropped. This is used in the
-    /// opposite manner as the above flag; if the response body is dropped, then
-    /// this communicates to the handler to stop running since the user has lost
-    /// interest in this request.
-    response_body_dropped: AtomicCell<bool>,
-}
-
 impl RequestHandler {
     /// Create a new request handler and an associated response future.
     pub(crate) fn new(
@@ -124,16 +105,13 @@ impl RequestHandler {
         impl Future<Output = Result<Response<ResponseBodyReader>, Error>>,
     ) {
         let (sender, receiver) = flume::bounded(1);
-        let shared = Arc::new(Shared {
-            result: OnceCell::new(),
-            response_body_dropped: AtomicCell::new(false),
-        });
+        let context = RequestContext::default();
         let (response_body_reader, response_body_writer) = pipe::pipe();
 
         let handler = Self {
             span: tracing::debug_span!("handler", id = tracing::field::Empty),
             sender: Some(sender),
-            shared: shared.clone(),
+            context: context.clone(),
             request_body,
             request_body_waker: None,
             response_status_code: None,
@@ -155,7 +133,7 @@ impl RequestHandler {
 
             let reader = ResponseBodyReader {
                 inner: response_body_reader,
-                shared,
+                context,
             };
 
             builder
@@ -217,7 +195,7 @@ impl RequestHandler {
 
     /// Set the final result for this transfer.
     pub(crate) fn set_result(&mut self, result: Result<(), Error>) {
-        if self.shared.result.set(result).is_err() {
+        if self.context.set_result(result).is_err() {
             tracing::debug!("attempted to set error multiple times");
         }
 
@@ -232,7 +210,7 @@ impl RequestHandler {
         // been completed.
         if let Some(sender) = self.sender.take() {
             // If our request has already failed early with an error, return that instead.
-            let result = if let Some(Err(e)) = self.shared.result.get() {
+            let result = if let Some(Err(e)) = self.context.result() {
                 tracing::warn!("request completed with error: {}", e);
                 Err(e.clone())
             } else {
@@ -267,6 +245,10 @@ impl RequestHandler {
         if let Some(addr) = self.get_primary_addr() {
             builder = builder.extension(RemoteAddr(addr));
         }
+
+        // Include the request context, as it can be used elsewhere later to tie
+        // the response back to this handler.
+        builder = builder.extension(self.context.clone());
 
         // Keep the request body around in case interceptors need access to
         // it. Otherwise we're just going to drop it later.
@@ -493,8 +475,8 @@ impl curl::easy::Handler for RequestHandler {
         let _enter = span.enter();
         tracing::trace!("received {} bytes of data", data.len());
 
-        // Abort the request if it has been canceled.
-        if self.shared.response_body_dropped.load() {
+        // Abort the request if requested.
+        if self.context.is_aborted() {
             return Ok(0);
         }
 
@@ -513,7 +495,7 @@ impl curl::easy::Handler for RequestHandler {
                 Poll::Ready(Err(e)) => {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         tracing::warn!(
-                            "failed to write response body because the response reader was dropped"
+                            "response dropped without fully consuming the response body, which can prevent connection reuse"
                         );
                     } else {
                         tracing::error!("error writing response body to buffer: {}", e);
@@ -644,7 +626,7 @@ impl fmt::Debug for RequestHandler {
 /// cancellation.
 pub(crate) struct ResponseBodyReader {
     inner: pipe::PipeReader,
-    shared: Arc<Shared>,
+    context: RequestContext,
 }
 
 impl AsyncRead for ResponseBodyReader {
@@ -658,7 +640,7 @@ impl AsyncRead for ResponseBodyReader {
         match inner.poll_read(cx, buf) {
             // On EOF, check to see if the transfer was cancelled, and if so,
             // return an error.
-            Poll::Ready(Ok(0)) => match self.shared.result.get() {
+            Poll::Ready(Ok(0)) => match self.context.result() {
                 // The transfer did finish successfully, so return EOF.
                 Some(Ok(())) => Poll::Ready(Ok(0)),
 
@@ -670,11 +652,5 @@ impl AsyncRead for ResponseBodyReader {
             },
             poll => poll,
         }
-    }
-}
-
-impl Drop for ResponseBodyReader {
-    fn drop(&mut self) {
-        self.shared.response_body_dropped.store(true);
     }
 }

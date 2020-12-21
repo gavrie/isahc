@@ -1,4 +1,4 @@
-use crate::{metrics::Metrics, redirect::EffectiveUri};
+use crate::{context::RequestContext, metrics::Metrics, redirect::EffectiveUri};
 use futures_lite::io::{AsyncRead, AsyncWrite};
 use http::{Response, Uri};
 use std::{
@@ -68,6 +68,25 @@ pub trait ResponseExt<T> {
     /// metrics you can use
     /// [`Configurable::metrics`](crate::config::Configurable::metrics).
     fn metrics(&self) -> Option<&Metrics>;
+
+    /// Abort this response transfer without reading any more of the response
+    /// body from the server.
+    ///
+    /// This is usually undesirable behavior as it makes it impossible to reuse
+    /// the connection when using HTTP/1.x for subsequent requests and can
+    /// result in sub-optimal performance. If the response body is only a few MB
+    /// and you are making multiple requests, then it is probably better to
+    /// consume the response body and throw away the bytes rather than aborting
+    /// and taking a hit on connection reuse. However, for operations such as
+    /// file downloading, aborting in response to user input may be exactly what
+    /// you want.
+    ///
+    /// If you drop a response with data still pending for the response body
+    /// without calling this method, then the response will be aborted
+    /// automatically and a warning emitted. If you intentionally _want_ abort
+    /// behavior, then it is better to call this method explicitly so that no
+    /// warning will be emitted.
+    fn abort(self);
 }
 
 impl<T> ResponseExt<T> for Response<T> {
@@ -90,6 +109,14 @@ impl<T> ResponseExt<T> for Response<T> {
 
     fn metrics(&self) -> Option<&Metrics> {
         self.extensions().get()
+    }
+
+    fn abort(self) {
+        if let Some(ctx) = self.extensions().get::<RequestContext>() {
+            ctx.abort();
+        } else {
+            tracing::warn!("cannot abort responses not created by isahc");
+        }
     }
 }
 
