@@ -29,6 +29,8 @@ use std::{
     sync::Arc,
     task::{Context, Poll, Waker},
 };
+use libc::c_void;
+use crate::config::ssl::CustomTls;
 
 pub(crate) struct RequestBody(pub(crate) AsyncBody);
 
@@ -88,6 +90,9 @@ pub(crate) struct RequestHandler {
     /// Metrics object for publishing metrics data to. Lazily initialized.
     metrics: Option<Metrics>,
 
+    /// Custom TLS configuration interface.
+    custom_tls: Option<CustomTls>,
+
     /// Raw pointer to the associated curl easy handle. The pointer is not owned
     /// by this struct, but the parent struct to this one, so we know it will be
     /// valid at least for the lifetime of this struct (assuming all other
@@ -119,6 +124,7 @@ impl RequestHandler {
     /// Create a new request handler and an associated response future.
     pub(crate) fn new(
         request_body: AsyncBody,
+        custom_tls: Option<&CustomTls>
     ) -> (
         Self,
         impl Future<Output = Result<Response<ResponseBodyReader>, Error>>,
@@ -143,6 +149,7 @@ impl RequestHandler {
             response_body_waker: None,
             metrics: None,
             handle: ptr::null_mut(),
+            custom_tls: custom_tls.cloned(),
         };
 
         // Create a future that resolves when the handler receives the response
@@ -631,6 +638,15 @@ impl curl::easy::Handler for RequestHandler {
             }
             _ => (),
         }
+    }
+
+    fn ssl_ctx(&mut self, cx: *mut c_void) -> Result<(), curl::Error> {
+         if let Some(cb) = &self.custom_tls {
+             unsafe {
+                 cb.configurer.configure(cx)
+             }
+         }
+         else { Ok(()) }
     }
 }
 

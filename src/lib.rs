@@ -218,7 +218,7 @@
     html_logo_url = "https://raw.githubusercontent.com/sagebind/isahc/master/media/isahc.svg.png",
     html_favicon_url = "https://raw.githubusercontent.com/sagebind/isahc/master/media/icon.png"
 )]
-#![deny(unsafe_code)]
+//#![deny(unsafe_code)]
 #![warn(
     future_incompatible,
     missing_debug_implementations,

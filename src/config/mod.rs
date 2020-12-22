@@ -28,7 +28,8 @@ pub(crate) mod ssl;
 pub use dial::{Dialer, DialerParseError};
 pub use dns::{DnsCache, ResolveMap};
 pub use redirect::RedirectPolicy;
-pub use ssl::{CaCertificate, ClientCertificate, PrivateKey, SslOption};
+pub use ssl::{CaCertificate, ClientCertificate, PrivateKey, SslOption, CustomTlsConfigurer};
+use crate::config::ssl::CustomTls;
 
 /// Provides additional methods when building a request for configuring various
 /// execution-related options on how the request should be sent.
@@ -535,6 +536,17 @@ pub trait Configurable: internal::ConfigurableBase {
     /// ```
     fn ssl_options(self, options: SslOption) -> Self {
         self.configure(options)
+    }
+
+    /// Set a custom tls configuration class,
+    /// TODO: documentation, examples, warnings!
+    fn danger_custom_tls_config<T>(self, configurer: T) -> Self
+        where
+            T: CustomTlsConfigurer + Send + Sync + 'static,
+    {
+        self.configure(CustomTls {
+            configurer: Box::new(configurer),
+        })
     }
 
     /// Enable or disable sending HTTP header names in Title-Case instead of

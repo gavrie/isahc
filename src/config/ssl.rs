@@ -7,6 +7,7 @@ use std::{
     ops::{BitOr, BitOrAssign},
     path::PathBuf,
 };
+use libc::c_void;
 
 /// A public key certificate file.
 #[derive(Clone, Debug)]
@@ -230,6 +231,38 @@ impl SetOpt for SslOption {
         easy.ssl_verify_peer(!self.contains(Self::DANGER_ACCEPT_INVALID_CERTS))?;
         easy.ssl_verify_host(!self.contains(Self::DANGER_ACCEPT_INVALID_HOSTS))
     }
+}
+
+/// Custom TLS callback intreface
+/// TODO: documentation, examples warnings
+pub trait CustomTlsConfigurer: CustomTlsConfigurerClone {
+    /// Custom TLS callback method
+    /// TODO: documentation, examples warnings
+    unsafe fn configure(&self, ctx: *mut c_void) -> Result<(), curl::Error>;
+}
+
+pub trait CustomTlsConfigurerClone {
+    fn clone_box(&self) -> Box<dyn CustomTlsConfigurer + Send + Sync>;
+}
+
+impl<T> CustomTlsConfigurerClone for T
+where
+    T: 'static + CustomTlsConfigurer + Clone + Send + Sync,
+{
+    fn clone_box(&self) -> Box<dyn CustomTlsConfigurer + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+
+impl Clone for Box<dyn CustomTlsConfigurer + Send + Sync> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct CustomTls {
+    pub(crate) configurer: Box<dyn CustomTlsConfigurer + Send + Sync>,
 }
 
 #[cfg(test)]

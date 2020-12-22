@@ -36,6 +36,7 @@ use std::{
     time::Duration,
 };
 use tracing_futures::Instrument;
+use crate::config::ssl::CustomTls;
 
 static USER_AGENT: Lazy<String> = Lazy::new(|| {
     format!(
@@ -1024,7 +1025,8 @@ impl HttpClient {
         let body = std::mem::take(request.body_mut());
         let has_body = !body.is_empty();
         let body_length = body.len();
-        let (handler, future) = RequestHandler::new(body);
+        let (handler, future) =
+            RequestHandler::new(body, self.inner.defaults.get::<CustomTls>());
 
         let mut easy = curl::easy::Easy2::new(handler);
 

@@ -42,6 +42,8 @@ slab = "0.4"
 sluice = "0.5"
 url = "2.2"
 waker-fn = "1"
+libc = "0.2"
+
 
 [dependencies.chrono]
 version = "0.4"
@@ -97,6 +99,8 @@ tempfile = "3.1"
 test-case = "1.0"
 tracing-subscriber = "=0.2.12"
 serde_json = "1"
+openssl = "0.10.31"
+openssl-sys = "0.9.59"
 
 [dev-dependencies.testserver]
 path = "testserver"
